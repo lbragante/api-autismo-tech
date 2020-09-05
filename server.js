@@ -3,6 +3,7 @@ const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const watson = require('./watson/client-watson');
+const assistantId = '25952f91-267e-4a00-876f-6d99268fbb1c'
 
 
 const app = express();
@@ -48,40 +49,60 @@ db.once('open', () => {
     console.log('Database is connected');
 });
 
-app.post('/mensagem', (req, resp) => {
-    const { text } = req.body;
-    const assistant_id = '25952f91-267e-4a00-876f-6d99268fbb1c'
-    let session = ''
 
-    watson.createSession({
-        assistantId: assistant_id
-    })
-        .then(res => {
-            //console.log(JSON.stringify(res.result, null, 2));
-            session = res.result.session_id;    
-            watson.messageStateless(
-                {
-                    assistantId: '25952f91-267e-4a00-876f-6d99268fbb1c',
-                    sessionId: session,
-                    input: {
-                        'message_type': 'text',
-                        'text': text
-                    }
-                })
-                .then(res => {
-                    console.log(JSON.stringify(res.result, null, 2));
-                    resp.json(res.result)
-                })
-                .catch(err => {
-                    console.log(err);
-                })
-        })
-        .catch(err => {
-            console.log(err);
-        });
-
+app.post('/mensagem', async (req, res) => {
+    await createSessionAndSendMessage(req, res);
 });
 
+app.post('/conversation/:sessionId*?', async (req, res) => {
+    // send payload to Conversation and return result
+    await sendMessage(req, res, req.params.sessionId, req.body.text);
+});
+
+app.delete('/conversation/:sessionId*?', async (req, res) => {
+    // delete a session
+    await deleteSession(req.params.sessionId);
+});
+
+const createSessionAndSendMessage = async (req, res) => {
+    await watson.createSession(
+        {
+            assistantId: process.env.ASSISTANT_ID || assistantId,
+        },
+        (error, response) => {
+            if (error) {
+                console.log(error);
+            } else {
+                const sessionId = response.result.session_id;
+                console.log(req.params)
+
+                sendMessage(req, res, sessionId, req.body.text);
+            }
+        },
+    );
+};
+
+const sendMessage = async (req, res, sessionId, text) => {
+    await watson.message({
+        assistantId,
+        sessionId,
+        input: {
+            message_type: 'text',
+            text,
+        },
+    }, (err, data) => {
+        if (err) {
+            if (err.message == 'Invalid Session') {
+                return createSessionAndSendMessage(req, res);
+            }
+            console.log(err);
+            return res.status(err.code || 500).json(err);
+        }
+        const cognitiveResponse = { intents: data.result.output.intents || [], entities: data.result.output.entities || [], code: data.result.output.generic[0].text }
+
+        return res.json({ sessionId, cognitiveResponse });
+    });
+};
 
 
 // Listen
